@@ -11,6 +11,7 @@ import type {
   ThreadOriginKind,
   ThreadVisibility,
 } from "@bb/domain";
+import { cloneForkSourceTimeline } from "./thread-fork-history.js";
 import type { BaseBranchSpec, UnmanagedBranchSpec } from "@bb/server-contract";
 import type { LoggedPendingInteractionWorkSessionDeps } from "../../types.js";
 import { COMMAND_TIMEOUT_MS } from "../../constants.js";
@@ -501,6 +502,9 @@ function intentHostId(
   return intent.hostId;
 }
 
+/** Builtin side-chat plugin id (see services/plugins/builtin-registry.ts). */
+const SIDE_CHAT_PLUGIN_ID = "side-chat";
+
 async function createProvisioningThread(
   deps: ThreadCreateDeps,
   args: CreateProvisioningThreadArgs & {
@@ -512,6 +516,25 @@ async function createProvisioningThread(
     environmentId: args.environmentId,
     status: "starting",
   });
+  // A fork's provider session carries the source conversation, so its
+  // timeline should show that history too. Clone the source's conversation
+  // events into the new thread before its own provisioning events are
+  // appended, so inherited history occupies the lowest sequences. Side chats
+  // are hidden forks that deliberately start with a bare panel, so they are
+  // excluded.
+  if (
+    args.fork !== null &&
+    args.request.originKind === "fork" &&
+    args.request.sourceThreadId !== undefined &&
+    args.request.originPluginId !== SIDE_CHAT_PLUGIN_ID
+  ) {
+    cloneForkSourceTimeline(deps, {
+      sourceThreadId: args.request.sourceThreadId,
+      sourceSeqEnd: args.request.sourceSeqEnd,
+      targetThreadId: thread.id,
+      targetEnvironmentId: thread.environmentId,
+    });
+  }
   let execution: Awaited<ReturnType<typeof buildExecutionOptions>>;
   let context: ThreadProvisionContext;
   try {
