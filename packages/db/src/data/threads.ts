@@ -300,8 +300,15 @@ export function createThread(
           titleFallback: input.titleFallback ?? null,
           sectionId: input.sectionId ?? null,
           status: input.status ?? "starting",
+          // A source-derived thread historically used parentThreadId as its
+          // source alias, so a fork with only a parent stays parentless. A
+          // fork that names BOTH keeps the parent as sidebar hierarchy —
+          // organization-only, since forks are excluded from parent turn
+          // reporting.
           parentThreadId:
-            originKind === null ? input.parentThreadId ?? null : null,
+            originKind === null || input.sourceThreadId !== undefined
+              ? input.parentThreadId ?? null
+              : null,
           sourceThreadId:
             input.sourceThreadId ??
             (originKind === null ? null : input.parentThreadId ?? null),

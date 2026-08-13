@@ -228,6 +228,35 @@ describe("public thread fork route", () => {
     });
   });
 
+  it("nests a fork under a requested parent without notifying the parent", async () => {
+    await withTestHarness(async (harness) => {
+      const { sourceThread } = seedForkSource(harness);
+      const parentEventsBefore = listEvents(harness.db, {
+        threadId: sourceThread.id,
+      }).length;
+
+      const response = await postFork(harness, {
+        sourceThreadId: sourceThread.id,
+        parentThreadId: sourceThread.id,
+        workspace: "reuse",
+      });
+
+      expect(response.status).toBe(201);
+      const fork = threadResponseSchema.parse(await readJson(response));
+      expect(fork).toMatchObject({
+        originKind: "fork",
+        parentThreadId: sourceThread.id,
+        sourceThreadId: sourceThread.id,
+      });
+      // Creation-time fork parenting is organization-only: the source/parent
+      // thread receives no "assigned to you" tell and no new events.
+      const parentEventsAfter = listEvents(harness.db, {
+        threadId: sourceThread.id,
+      }).length;
+      expect(parentEventsAfter).toBe(parentEventsBefore);
+    });
+  });
+
   it("honors sourceSeqEnd when cloning conversation events", async () => {
     await withTestHarness(async (harness) => {
       const { sourceThread } = seedForkSource(harness);

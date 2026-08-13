@@ -140,6 +140,9 @@ export async function createThreadForkFromRequest(
       ...(request.sourceSeqEnd === undefined
         ? {}
         : { sourceSeqEnd: request.sourceSeqEnd }),
+      ...(request.parentThreadId === undefined
+        ? {}
+        : { parentThreadId: request.parentThreadId }),
       sourceThreadId: sourceThread.id,
       startedOnBehalfOf: isSeedOnlyIdleFork
         ? { initiator: "agent", senderThreadId: sourceThread.id }

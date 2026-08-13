@@ -664,8 +664,17 @@ export async function createThreadFromRequest(
   const sourceThreadId =
     requestInput.sourceThreadId ??
     (originKind !== null ? requestInput.parentThreadId : undefined);
+  // A fork request that names BOTH a source and a parent nests under the
+  // parent as pure sidebar organization: forks are excluded from parent turn
+  // reporting (isParentNotifiableChildThread), so nothing is told to the
+  // parent's agent. Legacy fork requests that carry only parentThreadId keep
+  // treating it as the source.
   const hierarchyParentThreadId =
-    originKind === null ? requestInput.parentThreadId : undefined;
+    originKind === null
+      ? requestInput.parentThreadId
+      : requestInput.sourceThreadId !== undefined
+        ? requestInput.parentThreadId
+        : undefined;
   const parentThread = hierarchyParentThreadId
     ? assertValidParentThread(deps, {
         parentThreadId: hierarchyParentThreadId,
