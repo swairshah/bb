@@ -1,6 +1,9 @@
 import { ensurePersonalProject, getThread, listEvents } from "@bb/db";
 import { PERSONAL_PROJECT_ID, turnRequestEventDataSchema } from "@bb/domain";
-import { threadResponseSchema } from "@bb/server-contract";
+import {
+  threadResponseSchema,
+  threadTimelineResponseSchema,
+} from "@bb/server-contract";
 import { describe, expect, it } from "vitest";
 import {
   reportQueuedCommandSuccess,
@@ -186,6 +189,98 @@ describe("public thread fork route", () => {
     });
   });
 
+  it("clones the source conversation events into the fork timeline", async () => {
+    await withTestHarness(async (harness) => {
+      const { sourceThread } = seedForkSource(harness);
+
+      const response = await postFork(harness, {
+        sourceThreadId: sourceThread.id,
+        workspace: "reuse",
+      });
+
+      expect(response.status).toBe(201);
+      const fork = threadResponseSchema.parse(await readJson(response));
+      const forkEvents = listEvents(harness.db, { threadId: fork.id });
+      // Cloned conversation history occupies the lowest sequences: the
+      // source's user request and turn start come before the fork's own
+      // thread-start bookkeeping. Identity/provisioning events are not
+      // cloned.
+      const timelineResponse = await harness.app.request(
+        `/api/v1/threads/${fork.id}/timeline`,
+      );
+      expect(timelineResponse.status).toBe(200);
+      const timeline = threadTimelineResponseSchema.parse(
+        await readJson(timelineResponse),
+      );
+      const clonedUserRow = timeline.rows.find(
+        (row) => row.kind === "conversation" && row.role === "user",
+      );
+      expect(clonedUserRow?.text).toBe("Prior task");
+      const clonedTurnStarted = forkEvents.find(
+        (event) => event.type === "turn/started",
+      );
+      expect(clonedTurnStarted).toBeDefined();
+      expect(clonedTurnStarted?.turnId).toBe("turn-fork-source");
+      const identityEvents = forkEvents.filter(
+        (event) => event.type === "thread/identity",
+      );
+      expect(identityEvents).toHaveLength(0);
+    });
+  });
+
+  it("nests a fork under a requested parent without notifying the parent", async () => {
+    await withTestHarness(async (harness) => {
+      const { sourceThread } = seedForkSource(harness);
+      const parentEventsBefore = listEvents(harness.db, {
+        threadId: sourceThread.id,
+      }).length;
+
+      const response = await postFork(harness, {
+        sourceThreadId: sourceThread.id,
+        parentThreadId: sourceThread.id,
+        workspace: "reuse",
+      });
+
+      expect(response.status).toBe(201);
+      const fork = threadResponseSchema.parse(await readJson(response));
+      expect(fork).toMatchObject({
+        originKind: "fork",
+        parentThreadId: sourceThread.id,
+        sourceThreadId: sourceThread.id,
+      });
+      // Creation-time fork parenting is organization-only: the source/parent
+      // thread receives no "assigned to you" tell and no new events.
+      const parentEventsAfter = listEvents(harness.db, {
+        threadId: sourceThread.id,
+      }).length;
+      expect(parentEventsAfter).toBe(parentEventsBefore);
+    });
+  });
+
+  it("honors sourceSeqEnd when cloning conversation events", async () => {
+    await withTestHarness(async (harness) => {
+      const { sourceThread } = seedForkSource(harness);
+
+      // Sequence 2 is the source's client/turn/requested; sequence 3 is its
+      // turn/started. Anchoring at 2 must exclude the turn start.
+      const response = await postFork(harness, {
+        sourceThreadId: sourceThread.id,
+        sourceSeqEnd: 2,
+        workspace: "reuse",
+      });
+
+      expect(response.status).toBe(201);
+      const fork = threadResponseSchema.parse(await readJson(response));
+      const forkEvents = listEvents(harness.db, { threadId: fork.id });
+      expect(
+        forkEvents.some((event) => event.type === "client/turn/requested"),
+      ).toBe(true);
+      expect(forkEvents.some((event) => event.type === "turn/started")).toBe(
+        false,
+      );
+    });
+  });
+
   it("creates an idle fork at the source tip with no first run", async () => {
     await withTestHarness(async (harness) => {
       const { sourceThread } = seedForkSource(harness);
@@ -273,9 +368,11 @@ describe("public thread fork route", () => {
 
       expect(response.status).toBe(201);
       const fork = threadResponseSchema.parse(await readJson(response));
-      const requested = listEvents(harness.db, { threadId: fork.id }).find(
-        (event) => event.type === "client/turn/requested",
-      );
+      // The first client/turn/requested is cloned source history; the fork's
+      // own seed request is the last one.
+      const requested = listEvents(harness.db, { threadId: fork.id })
+        .filter((event) => event.type === "client/turn/requested")
+        .at(-1);
       expect(requested).toBeDefined();
       const requestData = turnRequestEventDataSchema.parse(
         JSON.parse(requested?.data ?? "null"),

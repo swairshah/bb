@@ -171,6 +171,10 @@ export const forkThreadRequestSchema = z
   .object({
     sourceThreadId: z.string().min(1),
     sourceSeqEnd: z.number().int().nonnegative().optional(),
+    /** Optional sidebar hierarchy parent for the fork (typically the source
+     *  thread). Creation-time fork parents are organization-only: forks are
+     *  excluded from parent turn reporting, so no agent is notified. */
+    parentThreadId: z.string().min(1).optional(),
     input: z.array(promptInputSchema).min(1).optional(),
     /** Context persisted on the fork start but hidden from user-facing output. */
     agentContextSeed: z.array(agentOnlyPromptInputSchema).min(1).optional(),
